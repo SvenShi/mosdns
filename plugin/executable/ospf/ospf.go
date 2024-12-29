@@ -194,9 +194,11 @@ func LoadFromIPs(ips []string, l []net.IPNet) ([]net.IPNet, error) {
 		if err != nil {
 			return l, fmt.Errorf("invalid ip #%d %s, %w", i, s, err)
 		}
-		l = append(l, net.IPNet{
-			IP: p.Addr().AsSlice(), Mask: net.CIDRMask(p.Bits(), 32),
-		})
+		if p.Addr().Is4() {
+			l = append(l, net.IPNet{
+				IP: p.Addr().AsSlice(), Mask: net.CIDRMask(p.Bits(), 32),
+			})
+		}
 	}
 	return l, nil
 }
@@ -251,10 +253,11 @@ func LoadFromReader(l []net.IPNet, reader io.Reader) ([]net.IPNet, error) {
 		if len(s) == 0 {
 			continue
 		}
-		l, err := LoadFromText(l, s)
+		ips, err := LoadFromText(l, s)
 		if err != nil {
 			return l, fmt.Errorf("invalid data at line #%d: %w", lineCounter, err)
 		}
+		l = ips
 	}
 	return l, scanner.Err()
 }
@@ -267,9 +270,11 @@ func LoadFromText(l []net.IPNet, s string) ([]net.IPNet, error) {
 		if err != nil {
 			return l, err
 		}
-		l = append(l, net.IPNet{
-			IP: ipNet.Addr().AsSlice(), Mask: net.CIDRMask(ipNet.Bits(), 32),
-		})
+		if ipNet.Addr().Is4() {
+			l = append(l, net.IPNet{
+				IP: ipNet.Addr().AsSlice(), Mask: net.CIDRMask(ipNet.Bits(), 32),
+			})
+		}
 		return l, nil
 	}
 
