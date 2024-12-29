@@ -37,7 +37,7 @@ docker 镜像: [docker hub](https://hub.docker.com/r/irinesistiana/mosdns)
       - exec: $ospf
 ```
 ### 注意项
-1. 如果RouterId为非本机IP，需要对应的RouterId路由在ospf邻居列表中
+1. 如果RouterId为非本机IP，需要对应的RouterId路由在ospf邻居列表中，我的另一个项目可以简单的添加ospf邻居https://github.com/SvenShi/ospf-neighbor
 2. 当前版本仅简单使用版，可能有未知问题
 
 
