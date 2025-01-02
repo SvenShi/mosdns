@@ -30,14 +30,17 @@ import (
 	"github.com/IrineSistiana/mosdns/v5/pkg/query_context"
 	"github.com/IrineSistiana/mosdns/v5/pkg/utils"
 	"github.com/IrineSistiana/mosdns/v5/plugin/executable/sequence"
+	"github.com/go-chi/chi/v5"
 	"github.com/miekg/dns"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"io"
 	"net"
+	"net/http"
 	"net/netip"
 	"os"
 	"strings"
+	"time"
 )
 
 const PluginType = "ospf"
@@ -57,6 +60,13 @@ type PersistentRouteConfig struct {
 	IPs   []string `yaml:"ips"`
 }
 
+type CallConfig struct {
+	Url    string            `yaml:"url"`
+	Method string            `yaml:"method"`
+	Body   string            `yaml:"body"`
+	Heads  map[string]string `yaml:"heads"`
+}
+
 // Args is the arguments of plugin. It will be decoded from yaml.
 // So it is recommended to use `yaml` as struct field's tag.
 type Args struct {
@@ -65,6 +75,7 @@ type Args struct {
 	Ip              string                `yaml:"ip"`
 	RouterId        string                `yaml:"routerId"`
 	PersistentRoute PersistentRouteConfig `yaml:"persistentRoute"`
+	Calls           []CallConfig          `yaml:"init-calls"`
 }
 
 var _ sequence.Executable = (*OSPF)(nil)
@@ -152,13 +163,76 @@ func Init(b *coremain.BP, args any) (any, error) {
 		}
 		router.AnnounceASBRRoute(allCIDRs)
 	}
+
 	ipPool := NewIpPool(arg.Ttl, router, b.L())
 	ipPool.Init()
 
-	b.L().Info("init success")
-	return &OSPF{
+	o := &OSPF{
 		logger: b.L(), router: router, ipPool: ipPool,
-	}, nil
+	}
+
+	b.RegAPI(o.Api())
+
+	callApi(arg.Calls, b.L())
+
+	b.L().Info("init success")
+
+	return o, nil
+}
+
+func (o *OSPF) Api() *chi.Mux {
+	r := chi.NewRouter()
+	r.Get("/alive", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	return r
+}
+
+func callApi(calls []CallConfig, logger *zap.Logger) {
+	// 使用 goroutines 来异步调用每个 API 配置
+	for _, call := range calls {
+		go func(call CallConfig) {
+			// 构建请求的 URL 和请求头
+			req, err := http.NewRequest(call.Method, call.Url, strings.NewReader(call.Body))
+			if err != nil {
+				// 记录错误信息
+				logger.Error("failed to create request", zap.String("url", call.Url), zap.Error(err))
+				return
+			}
+
+			// 设置请求头
+			for key, value := range call.Heads {
+				req.Header.Set(key, value)
+			}
+
+			// 执行请求
+			client := &http.Client{Timeout: 30 * time.Second} // 设置超时为30秒
+			resp, err := client.Do(req)
+			if err != nil {
+				// 请求失败，记录错误信息
+				logger.Error("failed to execute request", zap.String("url", call.Url), zap.Error(err))
+				return
+			}
+			defer func(Body io.ReadCloser) {
+				err := Body.Close()
+				if err != nil {
+					logger.Error("failed to close body stream", zap.String("url", call.Url), zap.Error(err))
+				}
+			}(resp.Body)
+
+			// 读取响应内容
+			respBody := new(bytes.Buffer)
+			_, err = respBody.ReadFrom(resp.Body)
+			if err != nil {
+				// 读取响应失败
+				logger.Error("failed to read response body", zap.String("url", call.Url), zap.Error(err))
+				return
+			}
+
+			// 记录响应内容
+			logger.Info("API call completed", zap.String("url", call.Url), zap.Int("status", resp.StatusCode), zap.String("response", respBody.String()))
+		}(call)
+	}
 }
 
 func QuickSetup(_ sequence.BQ, s string) (any, error) {
