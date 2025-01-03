@@ -28,6 +28,15 @@ docker 镜像: [docker hub](https://hub.docker.com/r/irinesistiana/mosdns)
         #  - "192.168.1.0/24"
         files:
           - "/opt/mosdns/dat/geoip_telegram.txt"
+          
+      init-calls:
+        - url: http://172.16.2.53/control/cache_clear
+          method: POST
+          heads:
+            "Authorization": Basic xxxxxxxxxxxxxx
+
+        - url: http://172.16.2.80:8796/restart
+          method: GET
 
   - tag: remote_sequence
     type: sequence
