@@ -150,6 +150,8 @@ func Init(b *coremain.BP, args any) (any, error) {
 	}
 	ospf_cnn.SetLogger(b.L())
 
+	callApi(arg.Calls, b.L())
+
 	router, err := ospf_cnn.NewRouter(arg.Iface, &ipNet, p.Addr().String(), arg.RouterId)
 	if err != nil {
 		return nil, err
@@ -173,8 +175,6 @@ func Init(b *coremain.BP, args any) (any, error) {
 
 	b.RegAPI(o.Api())
 
-	callApi(arg.Calls, b.L())
-
 	b.L().Info("init success")
 
 	return o, nil
@@ -189,49 +189,47 @@ func (o *OSPF) Api() *chi.Mux {
 }
 
 func callApi(calls []CallConfig, logger *zap.Logger) {
-	// 使用 goroutines 来异步调用每个 API 配置
+	// 依次调用每个 API 配置
 	for _, call := range calls {
-		go func(call CallConfig) {
-			// 构建请求的 URL 和请求头
-			req, err := http.NewRequest(call.Method, call.Url, strings.NewReader(call.Body))
+		// 构建请求的 URL 和请求头
+		req, err := http.NewRequest(call.Method, call.Url, strings.NewReader(call.Body))
+		if err != nil {
+			// 记录错误信息
+			logger.Error("failed to create request", zap.String("url", call.Url), zap.Error(err))
+			return
+		}
+
+		// 设置请求头
+		for key, value := range call.Heads {
+			req.Header.Set(key, value)
+		}
+
+		// 执行请求
+		client := &http.Client{Timeout: 30 * time.Second} // 设置超时为30秒
+		resp, err := client.Do(req)
+		if err != nil {
+			// 请求失败，记录错误信息
+			logger.Error("failed to execute request", zap.String("url", call.Url), zap.Error(err))
+			return
+		}
+		defer func(Body io.ReadCloser) {
+			err := Body.Close()
 			if err != nil {
-				// 记录错误信息
-				logger.Error("failed to create request", zap.String("url", call.Url), zap.Error(err))
-				return
+				logger.Error("failed to close body stream", zap.String("url", call.Url), zap.Error(err))
 			}
+		}(resp.Body)
 
-			// 设置请求头
-			for key, value := range call.Heads {
-				req.Header.Set(key, value)
-			}
+		// 读取响应内容
+		respBody := new(bytes.Buffer)
+		_, err = respBody.ReadFrom(resp.Body)
+		if err != nil {
+			// 读取响应失败
+			logger.Error("failed to read response body", zap.String("url", call.Url), zap.Error(err))
+			return
+		}
 
-			// 执行请求
-			client := &http.Client{Timeout: 30 * time.Second} // 设置超时为30秒
-			resp, err := client.Do(req)
-			if err != nil {
-				// 请求失败，记录错误信息
-				logger.Error("failed to execute request", zap.String("url", call.Url), zap.Error(err))
-				return
-			}
-			defer func(Body io.ReadCloser) {
-				err := Body.Close()
-				if err != nil {
-					logger.Error("failed to close body stream", zap.String("url", call.Url), zap.Error(err))
-				}
-			}(resp.Body)
-
-			// 读取响应内容
-			respBody := new(bytes.Buffer)
-			_, err = respBody.ReadFrom(resp.Body)
-			if err != nil {
-				// 读取响应失败
-				logger.Error("failed to read response body", zap.String("url", call.Url), zap.Error(err))
-				return
-			}
-
-			// 记录响应内容
-			logger.Info("API call completed", zap.String("url", call.Url), zap.Int("status", resp.StatusCode), zap.String("response", respBody.String()))
-		}(call)
+		// 记录响应内容
+		logger.Info("API call completed", zap.String("url", call.Url), zap.Int("status", resp.StatusCode), zap.String("response", respBody.String()))
 	}
 }
 
